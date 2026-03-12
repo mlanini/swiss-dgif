@@ -32,7 +32,7 @@ except ImportError:
 
 # ============================================================================
 # DGIF class → DGIF topic mapping
-# Derived from DGIF_BL.ili topic boundaries + class line numbers.
+# Derived from DGIF_V3.ili topic boundaries + class line numbers.
 # With --nameByTopic the ili2gpkg table name is "Topic.Class"
 # ============================================================================
 DGIF_CLASS_TO_TOPIC = {

@@ -11,7 +11,7 @@ same structure as OSM_to_DGIF_V3.csv.
 
 Input:
   - ressources/swissTLM3D_ili2_V2_3.ili   (swissTLM3D INTERLIS model)
-  - output/DGIF_BL.ili                     (DGIF 3.0 INTERLIS model)
+  - output/DGIF_V3.ili                     (DGIF 3.0 INTERLIS model)
 
 Output:
   - dgiwg_docs/swissTLM3D_to_DGIF_V3.csv
@@ -23,7 +23,7 @@ import os
 from pathlib import Path
 
 BASE = Path(__file__).resolve().parent.parent
-ILI_DGIF  = BASE / "output" / "DGIF_BL.ili"
+ILI_DGIF  = BASE / "output" / "DGIF_V3.ili"
 ILI_TLM   = BASE / "ressources" / "swissTLM3D_ili2_V2_3.ili"
 CSV_OUT   = BASE / "dgiwg_docs" / "swissTLM3D_to_DGIF_V3.csv"
 

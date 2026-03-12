@@ -1,4 +1,23 @@
-# DGIF — Project Guide
+# Swiss-DGIF
+
+**Swiss implementation of the Defence Geospatial Information Framework (DGIF) 3.0
+using INTERLIS 2.4**
+
+This repository provides an end-to-end, fully automated pipeline that takes the
+DGIF 3.0 UML model — maintained by the
+[Defence Geospatial Information Working Group (DGIWG)](https://dgiwg.org/) — and
+produces a standards-compliant Swiss geospatial data stack:
+
+1. **INTERLIS 2.4 model** (`DGIF_V3.ili`) — 673 classes, 21 topics, 0 compiler errors
+2. **GeoPackage** (`DGIF_V3.gpkg`) — OGC/DGIWG-conformant schema in WGS84
+3. **INTERLIS XML catalogues** — DGFCD + DGRWI concept dictionaries
+4. **Mapping tables** — OSM ↔ DGIF V3 (1,657 rows) and swissTLM3D ↔ DGIF V3 (215 rows)
+5. **ETL pipeline** — populates the DGIF GeoPackage with real-world
+   [swissTLM3D](https://www.swisstopo.admin.ch/en/landscape-model-swisstlm3d)
+   data from swisstopo, reprojected from LV95 to WGS84
+
+All scripts are pure Python. The only external runtime dependency is Java (for
+the INTERLIS toolchain: ili2c, ili2gpkg, ilivalidator).
 
 ## Overview
 
@@ -67,52 +86,6 @@ The DGIF 3.0 UML model (673 classes, 64 associations) is transformed into INTERL
 
 ---
 
-## Workspace structure
-
-```
-DGIF/
-├── ressources/                          # Source data and tools
-│   ├── DGIF_BL_2025-1.xmi              # Exported UML model (240,122 lines)
-│   ├── DGIF_BL_2025-1.qea              # Enterprise Architect project
-│   ├── CHE-DGIF_Architecture.qea       # Swiss DGIF architecture
-│   ├── swissTLM3D_ili2_V2_3.ili         # swissTLM3D INTERLIS model (807 lines)
-│   ├── ili2c-5.6.8/                     # INTERLIS compiler/validator
-│   ├── ili2gpkg-5.5.1/                  # GeoPackage generator from INTERLIS
-│   ├── ili2imd-1.7.1/                   # INTERLIS meta-model generator
-│   ├── ilivalidator-1.15.0/             # INTERLIS data validator
-│   └── Defence_Geospatial_…*.xlsx       # DGIF 2024-1 normative workbook
-│
-├── dgiwg_docs/                          # DGIWG reference documentation
-│   ├── OSM_to_DGIF_V2.csv              # OSM↔DGIF v2.0 mapping table (input)
-│   ├── OSM_to_DGIF_V3.csv              # OSM↔DGIF v3.0 mapping table (output)
-│   ├── swissTLM3D_to_DGIF_V3.csv       # swissTLM3D↔DGIF v3.0 mapping table (output)
-│   └── *.pdf / *.xlsx                   # DGIWG standards (DGFCD, DGRWI, GML, GeoPackage)
-│
-├── scripts/                             # Transformation pipeline
-│   ├── extract_dgfcd_dgrwi_catalogs.py  # Step 1 — INTERLIS XML catalogues
-│   ├── generate_ili_model.py            # Step 2 — INTERLIS .ili model
-│   ├── generate_gpkg.py                 # Step 3 — GeoPackage
-│   ├── build_osm_dgif_v3.py            # Step 4 — OSM mapping table V2→V3
-│   ├── build_swisstlm3d_dgif_v3.py     # Step 5 — swissTLM3D↔DGIF V3 mapping
-│   ├── etl_swisstlm3d_to_dgif.py       # Step 6 — ETL orchestrator (Python)
-│   └── etl_swisstlm3d_transform.py     # Step 6 — ETL transform & load
-│
-├── output/                              # Generated artefacts
-│   ├── DGIF_BL.ili                      # INTERLIS 2.4 model (7,386 lines)
-│   ├── DGIF_BL.gpkg                     # GeoPackage (22.5 MB)
-│   ├── DGFCD_FeatureConcepts.xml        # DGFCD Feature Concepts catalogue
-│   ├── DGFCD_AttributeConcepts.xml      # DGFCD Attribute Concepts catalogue
-│   ├── DGFCD_AttributeDataTypes.xml     # DGFCD Attribute Data Types catalogue
-│   ├── DGFCD_AttributeValueConcepts.xml # DGFCD Attribute Value Concepts catalogue
-│   ├── DGFCD_RoleConcepts.xml           # DGFCD Role Concepts catalogue
-│   ├── DGFCD_UnitsOfMeasure.xml         # DGFCD Units of Measure catalogue
-│   └── DGRWI_RealWorldObjects.xml       # DGRWI Real-World Objects catalogue
-│
-└── README.md                            # This file
-```
-
----
-
 ## Pipeline — Step by step
 
 ### Step 1 — INTERLIS XML Catalogues
@@ -149,7 +122,7 @@ Transforms the UML/XMI model into an `.ili` file compliant with INTERLIS 2.4 and
 
 | UML Element | INTERLIS Element |
 |-------------|------------------|
-| Package DGIM | `MODEL DGIF_BL` |
+| Package DGIM | `MODEL DGIF_V3` |
 | Thematic sub-packages | `TOPIC` (21 topics) |
 | `uml:Class` | `CLASS` with OID (673 classes) |
 | `ownedAttribute` | `ATTRIBUTE` with cardinality |
@@ -176,7 +149,7 @@ python scripts/generate_ili_model.py
 
 **Validate:**
 ```bash
-java -jar ressources/ili2c-5.6.8/ili2c.jar --check output/DGIF_BL.ili
+java -jar ressources/ili2c-5.6.8/ili2c.jar --check output/DGIF_V3.ili
 ```
 
 ---
@@ -203,7 +176,7 @@ Generates a GeoPackage conforming to the DGIWG profile (STD-08-006) using `ili2g
 | `--strokeArcs` | Arcs → line segments for compatibility |
 | `--createEnumTabs` | Lookup tables for enumerations |
 
-**Result:** `output/DGIF_BL.gpkg` — 22.5 MB, **1,457 tables** (9 with geometry, 1,448 attribute-only), SRID 4326.
+**Result:** `output/DGIF_V3.gpkg` — 22.5 MB, **1,457 tables** (9 with geometry, 1,448 attribute-only), SRID 4326.
 
 **Run:**
 ```bash
@@ -220,7 +193,7 @@ Updates the mapping table between OpenStreetMap tags and DGIF classes from
 version 2.0 to version 3.0, based on three sources:
 
 1. **V2 CSV** (`dgiwg_docs/OSM_to_DGIF_V2.csv`) — 1,610 rows, 26 OSM categories
-2. **INTERLIS V3 model** (`output/DGIF_BL.ili`) — 673 classes in 21 topics
+2. **INTERLIS V3 model** (`output/DGIF_V3.ili`) — 673 classes in 21 topics
 3. **OSM wiki Map_features** — current state of OSM tags
 
 **Operations performed:**
@@ -286,7 +259,7 @@ python scripts/build_osm_dgif_v3.py
 
 **Script:** `scripts/build_swisstlm3d_dgif_v3.py`
 
-**Input:** swissTLM3D INTERLIS model (`ressources/swissTLM3D_ili2_V2_3.ili`) and `output/DGIF_BL.ili`.
+**Input:** swissTLM3D INTERLIS model (`ressources/swissTLM3D_ili2_V2_3.ili`) and `output/DGIF_V3.ili`.
 
 **Output:** `dgiwg_docs/swissTLM3D_to_DGIF_V3.csv` — 215 rows, 93 distinct DGIF classes, 0 errors.
 
@@ -355,7 +328,7 @@ python scripts/build_swisstlm3d_dgif_v3.py
 
 **Input:**
 - swissTLM3D XTF archive from [data.geo.admin.ch](https://data.geo.admin.ch/ch.swisstopo.swisstlm3d/)
-- `output/DGIF_BL.ili` — DGIF INTERLIS model
+- `output/DGIF_V3.ili` — DGIF INTERLIS model
 - `dgiwg_docs/swissTLM3D_to_DGIF_V3.csv` — mapping table (215 rules)
 
 **Output:** `output/DGIF_swissTLM3D.gpkg` — DGIF-conformant GeoPackage populated with swissTLM3D data in WGS84 (EPSG:4326).
@@ -369,7 +342,7 @@ The pipeline runs in 6 phases:
 | 1 — Download | Python | Downloads the swissTLM3D GeoPackage ZIP archive (~4.6 GB) |
 | 2 — Extract | Python | Extracts the `.gpkg` file from the ZIP |
 | 2b — Validate | ilivalidator | Validates the data against the INTERLIS model (`--modeldir`, `--logtime`); generates text log and XTF error log. Non-blocking: pipeline continues on validation errors (official swisstopo data may contain minor model deviations). Skippable with `--skip-validation` |
-| 3 — Schema | ili2gpkg | Creates an empty DGIF GeoPackage via `--schemaimport` with `DGIF_BL.ili` (same options as Step 3: `--noSmartMapping`, `--nameByTopic`, SRID 4326) |
+| 3 — Schema | ili2gpkg | Creates an empty DGIF GeoPackage via `--schemaimport` with `DGIF_V3.ili` (same options as Step 3: `--noSmartMapping`, `--nameByTopic`, SRID 4326) |
 | 4 — Import | ili2gpkg | Imports the swissTLM3D data into the DGIF GeoPackage (`--import`, SRID 2056, `--nameByTopic`) |
 | 5 — Transform | Python/OGR | Reads the TLM GeoPackage, applies the mapping CSV, reprojects LV95→WGS84, and inserts features into the DGIF GeoPackage |
 
@@ -414,9 +387,9 @@ python scripts/etl_swisstlm3d_to_dgif.py --skip-download --skip-validation
 |-----------|---------|------|
 | Python | 3.12+ | System Python or QGIS-bundled Python |
 | Java (JRE) | ≥ 11 | In system `PATH` |
-| ili2c | 5.6.8 | `ressources/ili2c-5.6.8/ili2c.jar` |
-| ili2gpkg | 5.5.1 | `ressources/ili2gpkg-5.5.1/ili2gpkg-5.5.1.jar` |
-| ilivalidator | 1.15.0 | `ressources/ilivalidator-1.15.0/ilivalidator-1.15.0.jar` |
+| ili2c | 5.6.8 | `<your_path_to>/ili2c-5.6.8/ili2c.jar` |
+| ili2gpkg | 5.5.1 | `<your_path_to>/ili2gpkg-5.5.1/ili2gpkg-5.5.1.jar` |
+| ilivalidator | 1.15.0 | `<your_path_to>/ilivalidator-1.15.0/ilivalidator-1.15.0.jar` |
 | GDAL/OGR | 3.10+ | Bundled with QGIS or installed separately |
 
 > **Note:** Steps 1–5 use only the Python standard library. Step 6 additionally
@@ -440,7 +413,7 @@ python scripts/extract_dgfcd_dgrwi_catalogs.py
 python scripts/generate_ili_model.py
 
 # Step 2b — Validation
-java -jar ressources/ili2c-5.6.8/ili2c.jar --check output/DGIF_BL.ili
+java -jar ressources/ili2c-5.6.8/ili2c.jar --check output/DGIF_V3.ili
 
 # Step 3 — GeoPackage
 python scripts/generate_gpkg.py
@@ -479,13 +452,6 @@ The CSV (`;` delimiter) has the following structure:
 
 ---
 
-## Project timeline
+## Licence
 
-| Date | Step | Result |
-|------|------|--------|
-| Mar 2026 | Step 1 | 7 INTERLIS XML catalogues generated |
-| Mar 2026 | Step 2 | `DGIF_BL.ili` — 673 classes, 0 ili2c errors |
-| Mar 2026 | Step 3 | `DGIF_BL.gpkg` — 22.5 MB, 1,457 tables, 9 geometries |
-| Mar 2026 | Step 4 | `OSM_to_DGIF_V3.csv` — 1,657 rows, 25 fixes, 47 new tags |
-| Mar 2026 | Step 5 | `swissTLM3D_to_DGIF_V3.csv` — 215 rows, 93 DGIF classes, 0 errors |
-| Mar 2026 | Step 6 | `DGIF_swissTLM3D.gpkg` — ETL pipeline: XTF → DGIF GeoPackage (WGS84) |
+This project is released under the [MIT Licence](LICENSE).

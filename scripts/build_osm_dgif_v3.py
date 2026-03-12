@@ -4,10 +4,10 @@
 build_osm_dgif_v3.py
 =====================
 Reads the V2 CSV mapping table (OSM_to_DGIF_V2.csv), the DGIF 3.0 INTERLIS
-model (DGIF_BL.ili), compares class names, and produces an updated V3 CSV.
+model (DGIF_V3.ili), compares class names, and produces an updated V3 CSV.
 
 Steps:
-  1. Extract all class names from DGIF_BL.ili (V3).
+  1. Extract all class names from DGIF_V3.ili (V3).
   2. Parse V2 CSV -> list of mapping rows.
   3. For each V2 row with a DGIF Feature Alpha name, check it still exists
      in V3.  Identify renamed / removed classes.
@@ -26,7 +26,7 @@ from pathlib import Path
 
 # ── paths ────────────────────────────────────────────────────────────────────
 BASE = Path(__file__).resolve().parent.parent
-ILI_FILE  = BASE / "output" / "DGIF_BL.ili"
+ILI_FILE  = BASE / "output" / "DGIF_V3.ili"
 CSV_V2    = BASE / "dgiwg_docs" / "OSM_to_DGIF_V2.csv"
 CSV_V3    = BASE / "dgiwg_docs" / "OSM_to_DGIF_V3.csv"
 

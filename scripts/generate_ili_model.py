@@ -4,7 +4,7 @@
 Generate INTERLIS 2.4 model (.ili) from DGIF_BL_2025-1.xmi.
 
 Mapping rules (UML → INTERLIS 2.4 / eCH-0031 V2.1.0):
-  - DGIM package                → MODEL DGIF_BL
+  - DGIM package                → MODEL DGIF_V3
   - DGIM thematic sub-packages  → TOPIC
   - uml:Class                   → CLASS (with OID)
   - ownedAttribute              → ATTRIBUTE with cardinality
@@ -14,7 +14,7 @@ Mapping rules (UML → INTERLIS 2.4 / eCH-0031 V2.1.0):
   - uml:DataType (Foundation)   → STRUCTURE
   - AttributeDataTypes          → mapped to INTERLIS base types
 
-Output: output/DGIF_BL.ili
+Output: output/DGIF_V3.ili
 """
 
 import xml.etree.ElementTree as ET
@@ -28,7 +28,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 BASE_DIR = os.path.dirname(SCRIPT_DIR)
 XMI_PATH = os.path.join(BASE_DIR, "ressources", "DGIF_BL_2025-1.xmi")
 OUTPUT_DIR = os.path.join(BASE_DIR, "output")
-OUTPUT_FILE = os.path.join(OUTPUT_DIR, "DGIF_BL.ili")
+OUTPUT_FILE = os.path.join(OUTPUT_DIR, "DGIF_V3.ili")
 
 XMI_NS = "http://www.omg.org/spec/XMI/20110701"
 UML_NS = "http://www.omg.org/spec/UML/20110701"
@@ -648,7 +648,7 @@ def write_model_footer(w, model_name):
     w.blank()
 
 
-def write_topic_header(w, topic_name, depends_on=None, model_name="DGIF_BL"):
+def write_topic_header(w, topic_name, depends_on=None, model_name="DGIF_V3"):
     # INTERLIS 2.4 grammar: DEPENDS ON goes INSIDE the topic body (after '=')
     w.write(f"TOPIC {topic_name} =")
     w.inc()
@@ -667,7 +667,7 @@ def write_topic_footer(w, topic_name):
 
 def write_class(w, cls_info, id_name_map, id_elem_map, local_enums, 
                 all_class_names, class_to_topic=None, current_topic=None,
-                effective_deps=None, model_name="DGIF_BL",
+                effective_deps=None, model_name="DGIF_V3",
                 inherited_attr_names=None, emitted_class_names=None):
     """Write a single CLASS definition.
     
@@ -815,7 +815,7 @@ def write_class(w, cls_info, id_name_map, id_elem_map, local_enums,
 def write_association(w, assoc_info, id_name_map, all_class_names,
                       class_to_topic=None, current_topic=None,
                       effective_deps=None, emitted_topics=None,
-                      model_name="DGIF_BL"):
+                      model_name="DGIF_V3"):
     """Write an ASSOCIATION definition in INTERLIS 2.4 syntax.
     
     Correct INTERLIS 2.4 RoleDef syntax (§3.7.1):
@@ -939,7 +939,7 @@ def main():
     # Start writing INTERLIS
     w = IliWriter()
     write_ili_header(w)
-    write_model_header(w, "DGIF_BL")
+    write_model_header(w, "DGIF_V3")
     
     # Collect all class names across all topics for cross-references
     # Also build class_to_topic mapping
@@ -1094,7 +1094,7 @@ def main():
                 cls_info, all_class_infos_map, id_name_map)
             write_class(w, cls_info, id_name_map, id_elem_map, local_enums,
                        all_class_names, class_to_topic, topic_name,
-                       effective_deps=eff_deps, model_name="DGIF_BL",
+                       effective_deps=eff_deps, model_name="DGIF_V3",
                        inherited_attr_names=inherited,
                        emitted_class_names=emitted_class_names)
             emitted_class_names.add(cls_info["name"])
@@ -1109,13 +1109,13 @@ def main():
                                   current_topic=topic_name,
                                   effective_deps=eff_deps,
                                   emitted_topics=emitted_topics,
-                                  model_name="DGIF_BL")
+                                  model_name="DGIF_V3")
                 total_assocs += 1
         
         write_topic_footer(w, topic_name)
         emitted_topics.add(topic_name)
     
-    write_model_footer(w, "DGIF_BL")
+    write_model_footer(w, "DGIF_V3")
     
     # Write output
     os.makedirs(OUTPUT_DIR, exist_ok=True)

@@ -3,7 +3,7 @@
 DGIF GeoPackage Generator (ili2gpkg 5.5.1)
 
 Generates a GeoPackage conforming to the DGIWG profile (STD-08-006) from the
-INTERLIS 2.4 model DGIF_BL.ili using ili2gpkg 5.5.1.
+INTERLIS 2.4 model DGIF_V3.ili using ili2gpkg 5.5.1.
 
 Inheritance strategy:
   The DGIF model has a very deep and wide hierarchy (Entity with 600+
@@ -17,7 +17,7 @@ Inheritance strategy:
 Prerequisites:
   - Java 8+ (java in PATH)
   - ili2gpkg-5.5.1.jar in ressources/ili2gpkg-5.5.1/
-  - DGIF_BL.ili in output/
+  - DGIF_V3.ili in output/
 """
 
 import os
@@ -68,9 +68,9 @@ def main() -> int:
     # ========================================================================
     workspace_root = Path(__file__).resolve().parent.parent
     ili2gpkg_jar = workspace_root / "ressources" / "ili2gpkg-5.5.1" / "ili2gpkg-5.5.1.jar"
-    ili_model = workspace_root / "output" / "DGIF_BL.ili"
+    ili_model = workspace_root / "output" / "DGIF_V3.ili"
     output_dir = workspace_root / "output"
-    gpkg_file = output_dir / "DGIF_BL.gpkg"
+    gpkg_file = output_dir / "DGIF_V3.gpkg"
     log_file = output_dir / "ili2gpkg_schemaimport.log"
 
     # Model directory: output folder (where .ili lives) + standard repository

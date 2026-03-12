@@ -6,7 +6,7 @@ Orchestrates the full ETL process:
   Phase 1  — Download swissTLM3D XTF archive from data.geo.admin.ch
   Phase 2  — Extract the XTF file from the ZIP
   Phase 2b — Validate the XTF against the INTERLIS model (ilivalidator)
-  Phase 3  — Create an empty DGIF GeoPackage (schema import from DGIF_BL.ili)
+  Phase 3  — Create an empty DGIF GeoPackage (schema import from DGIF_V3.ili)
   Phase 4  — Import XTF into a temporary swissTLM3D GeoPackage (ili2gpkg)
   Phase 5  — Transform and load: Python script reads TLM GPKG, applies
              mapping table, reprojects LV95→WGS84, writes into DGIF GPKG
@@ -16,7 +16,7 @@ Prerequisites:
   - Python 3.12 with GDAL/OGR (QGIS bundled)
   - ili2gpkg 5.5.1 in ressources/ili2gpkg-5.5.1/
   - ilivalidator 1.15.0 in ressources/ilivalidator-1.15.0/
-  - DGIF_BL.ili in output/
+  - DGIF_V3.ili in output/
   - swissTLM3D_ili2_V2_3.ili in ressources/
   - swissTLM3D_to_DGIF_V3.csv in dgiwg_docs/
 """
@@ -180,7 +180,7 @@ def main() -> int:
     workspace_root = Path(__file__).resolve().parent.parent
     ili2gpkg_jar = workspace_root / "ressources" / "ili2gpkg-5.5.1" / "ili2gpkg-5.5.1.jar"
     ilivalidator_jar = workspace_root / "ressources" / "ilivalidator-1.15.0" / "ilivalidator-1.15.0.jar"
-    dgif_ili = workspace_root / "output" / "DGIF_BL.ili"
+    dgif_ili = workspace_root / "output" / "DGIF_V3.ili"
     tlm_ili = workspace_root / "ressources" / "swissTLM3D_ili2_V2_3.ili"
     mapping_csv = workspace_root / "dgiwg_docs" / "swissTLM3D_to_DGIF_V3.csv"
     transform_py = workspace_root / "scripts" / "etl_swisstlm3d_transform.py"
