@@ -508,6 +508,7 @@ def main() -> int:
                 "-jar", str(ili2gpkg_jar),
                 "--import",
                 "--dbfile", str(tlm_gpkg),
+                "--disableValidation",
                 "--defaultSrsAuth", "EPSG",
                 "--defaultSrsCode", "2056",
                 "--nameByTopic",

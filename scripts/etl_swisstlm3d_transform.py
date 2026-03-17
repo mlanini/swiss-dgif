@@ -245,22 +245,34 @@ def load_mapping(csv_path: str) -> dict[tuple[str, str], list[MappingRow]]:
 def discover_tlm_tables(gpkg_path: str) -> dict[str, str]:
     """
     Returns dict of TLM class name → actual GeoPackage table name.
-    With --nameByTopic the tables are e.g. 'TLM_AREALE.TLM_FREIZEITAREAL'.
+    Uses the ili2db metadata table T_ILI2DB_CLASSNAME to resolve
+    INTERLIS qualified names (e.g. 'swissTLM3D_ili2_V2_4.TLM_STRASSEN.TLM_STRASSE')
+    to the actual SQL table name (e.g. 'tlm_strassen_tlm_strasse').
+    The returned key is the short class name (e.g. 'TLM_STRASSE').
     """
-    ds = ogr.Open(gpkg_path, 0)
-    if ds is None:
-        print(f"[ERROR] Cannot open TLM GeoPackage: {gpkg_path}", file=sys.stderr)
-        sys.exit(1)
+    import sqlite3
 
+    conn = sqlite3.connect(gpkg_path)
+    cur = conn.cursor()
+
+    # Build set of actual feature table names for filtering
+    cur.execute("SELECT table_name FROM gpkg_contents WHERE data_type='features'")
+    feature_tables = {row[0] for row in cur.fetchall()}
+
+    # Use ili2db metadata to get the INTERLIS class name → SQL table mapping
     tables = {}
-    for i in range(ds.GetLayerCount()):
-        lyr = ds.GetLayerByIndex(i)
-        name = lyr.GetName()
-        # Extract class part: "TLM_AREALE.TLM_FREIZEITAREAL" → "TLM_FREIZEITAREAL"
-        class_part = name.split(".")[-1] if "." in name else name
-        tables[class_part] = name
+    cur.execute("SELECT iliname, sqlname FROM T_ILI2DB_CLASSNAME")
+    for iliname, sqlname in cur.fetchall():
+        if sqlname not in feature_tables:
+            continue
+        # iliname: 'swissTLM3D_ili2_V2_4.TLM_STRASSEN.TLM_STRASSE'
+        # Extract last part as class name: 'TLM_STRASSE'
+        parts = iliname.split(".")
+        if len(parts) >= 3:
+            class_name = parts[-1]  # e.g. 'TLM_STRASSE'
+            tables[class_name] = sqlname
 
-    ds = None
+    conn.close()
     return tables
 
 
@@ -270,21 +282,34 @@ def discover_tlm_tables(gpkg_path: str) -> dict[str, str]:
 def discover_dgif_tables(gpkg_path: str) -> dict[str, str]:
     """
     Returns dict of DGIF class name → actual GeoPackage table name.
-    With --nameByTopic tables are e.g. 'Cultural.Building'.
+    Uses the ili2db metadata table T_ILI2DB_CLASSNAME to resolve
+    INTERLIS qualified names (e.g. 'DGIF_V3.Cultural.Building')
+    to the actual SQL table name (e.g. 'cultural_building').
+    The returned key is the short class name (e.g. 'Building').
     """
-    ds = ogr.Open(gpkg_path, 0)
-    if ds is None:
-        print(f"[ERROR] Cannot open DGIF GeoPackage: {gpkg_path}", file=sys.stderr)
-        sys.exit(1)
+    import sqlite3
 
+    conn = sqlite3.connect(gpkg_path)
+    cur = conn.cursor()
+
+    # Build set of actual table names for filtering (features + attributes)
+    cur.execute("SELECT table_name FROM gpkg_contents WHERE data_type IN ('features','attributes')")
+    feature_tables = {row[0] for row in cur.fetchall()}
+
+    # Use ili2db metadata to get the INTERLIS class name → SQL table mapping
     tables = {}
-    for i in range(ds.GetLayerCount()):
-        lyr = ds.GetLayerByIndex(i)
-        name = lyr.GetName()
-        class_part = name.split(".")[-1] if "." in name else name
-        tables[class_part] = name
+    cur.execute("SELECT iliname, sqlname FROM T_ILI2DB_CLASSNAME")
+    for iliname, sqlname in cur.fetchall():
+        if sqlname not in feature_tables:
+            continue
+        # iliname: 'DGIF_V3.Cultural.Building'
+        # Extract last part as class name: 'Building'
+        parts = iliname.split(".")
+        if len(parts) >= 3:
+            class_name = parts[-1]  # e.g. 'Building'
+            tables[class_name] = sqlname
 
-    ds = None
+    conn.close()
     return tables
 
 
@@ -410,6 +435,111 @@ def to_gpkg_wkb(geom: ogr.Geometry, srs_id: int = 4326) -> bytes:
 
 
 # ============================================================================
+# Build ili2db class metadata from DGIF GeoPackage
+# ============================================================================
+def build_class_metadata(conn: sqlite3.Connection) -> dict:
+    """
+    Build metadata dict for DGIF classes from ili2db system tables.
+    Returns dict keyed by short class name (e.g. 'Building') with:
+      - iliname: fully qualified INTERLIS name (e.g. 'DGIF_V3.Cultural.Building')
+      - sqlname: SQL table name (e.g. 'cultural_building')
+      - topic:   INTERLIS topic name (e.g. 'Cultural')
+      - columns: set of column names (lowercase)
+      - notnull_defaults: dict of lowercase col name -> default value for
+        domain-specific NOT NULL columns (excludes T_Id, T_basket, T_LastChange,
+        T_CreateDate, T_User which are always provided)
+    """
+    cur = conn.cursor()
+
+    # Get all class name mappings
+    cur.execute("SELECT iliname, sqlname FROM T_ILI2DB_CLASSNAME")
+    classname_rows = cur.fetchall()
+
+    # Get all table names from gpkg_contents (features + attributes)
+    cur.execute("SELECT table_name FROM gpkg_contents WHERE data_type IN ('features','attributes')")
+    all_tables = {row[0] for row in cur.fetchall()}
+
+    # Columns always provided by the ETL code
+    always_provided = {"t_id", "t_basket", "t_lastchange", "t_createdate", "t_user"}
+
+    meta = {}
+    for iliname, sqlname in classname_rows:
+        if sqlname not in all_tables:
+            continue
+        parts = iliname.split(".")
+        if len(parts) >= 3:
+            class_name = parts[-1]   # e.g. 'Building'
+            topic_name = parts[-2]   # e.g. 'Cultural'
+            # Get column info (name, type, notnull, default)
+            col_cur = conn.execute(f'PRAGMA table_info("{sqlname}")')
+            columns = set()
+            notnull_defaults = {}
+            for row in col_cur.fetchall():
+                col_name = row[1].lower()
+                col_type = (row[2] or "").upper()
+                is_notnull = bool(row[3])
+                columns.add(col_name)
+                if is_notnull and col_name not in always_provided:
+                    # Determine a sensible default based on column type
+                    if "INT" in col_type:
+                        notnull_defaults[col_name] = 0
+                    elif "DOUBLE" in col_type or "REAL" in col_type or "FLOAT" in col_type:
+                        notnull_defaults[col_name] = 0.0
+                    elif "BOOL" in col_type:
+                        notnull_defaults[col_name] = False
+                    else:
+                        # TEXT / VARCHAR — use 'unknown'
+                        notnull_defaults[col_name] = "unknown"
+            meta[class_name] = {
+                "iliname": iliname,
+                "sqlname": sqlname,
+                "topic": topic_name,
+                "columns": columns,
+                "notnull_defaults": notnull_defaults,
+            }
+    return meta
+
+
+# ============================================================================
+# Ensure dataset and baskets exist
+# ============================================================================
+def ensure_baskets(conn: sqlite3.Connection, topics_needed: set[str]) -> dict[str, int]:
+    """
+    Create a dataset and one basket per DGIF topic.
+    Returns dict of topic_iliname -> basket T_Id.
+    """
+    cur = conn.cursor()
+
+    # Check for existing dataset
+    cur.execute("SELECT T_Id FROM T_ILI2DB_DATASET LIMIT 1")
+    row = cur.fetchone()
+    if row:
+        dataset_id = row[0]
+    else:
+        cur.execute("INSERT INTO T_ILI2DB_DATASET (datasetName) VALUES (?)", ("swissTLM3D_import",))
+        dataset_id = cur.lastrowid
+
+    # Create baskets for each topic
+    basket_map = {}
+    for topic_ili in sorted(topics_needed):
+        # topic_ili e.g. 'DGIF_V3.Cultural'
+        cur.execute("SELECT T_Id FROM T_ILI2DB_BASKET WHERE topic=?", (topic_ili,))
+        row = cur.fetchone()
+        if row:
+            basket_map[topic_ili] = row[0]
+        else:
+            basket_tid = str(uuid.uuid4())
+            cur.execute(
+                "INSERT INTO T_ILI2DB_BASKET (dataset, topic, T_Ili_Tid, attachmentKey) VALUES (?,?,?,?)",
+                (dataset_id, topic_ili, basket_tid, "swissTLM3D_import")
+            )
+            basket_map[topic_ili] = cur.lastrowid
+
+    conn.commit()
+    return basket_map
+
+
+# ============================================================================
 # Main transform
 # ============================================================================
 def transform(
@@ -426,9 +556,36 @@ def transform(
     tlm_tables = discover_tlm_tables(tlm_gpkg_path)
     print(f"[INFO] Found {len(tlm_tables)} TLM tables")
 
-    print("[INFO] Discovering DGIF tables...")
-    dgif_tables = discover_dgif_tables(dgif_gpkg_path)
-    print(f"[INFO] Found {len(dgif_tables)} DGIF tables")
+    # Open DGIF GeoPackage via sqlite3
+    dgif_conn = sqlite3.connect(dgif_gpkg_path)
+    dgif_conn.execute("PRAGMA journal_mode=WAL")
+    dgif_conn.execute("PRAGMA synchronous=NORMAL")
+    dgif_conn.execute("PRAGMA cache_size=-64000")  # 64 MB
+    dgif_conn.execute("PRAGMA foreign_keys=OFF")    # defer FK checks for performance
+
+    # Drop rtree triggers that reference ST_IsEmpty / ST_MinX etc.
+    # These SpatiaLite functions are not available in plain sqlite3.
+    # We will rebuild the rtree index after all inserts.
+    rtree_triggers = dgif_conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='trigger' "
+        "AND (sql LIKE '%ST_IsEmpty%' OR sql LIKE '%ST_MinX%')"
+    ).fetchall()
+    if rtree_triggers:
+        print(f"[INFO] Dropping {len(rtree_triggers)} rtree triggers (SpatiaLite not available)...")
+        for (tname,) in rtree_triggers:
+            dgif_conn.execute(f'DROP TRIGGER IF EXISTS "{tname}"')
+        dgif_conn.commit()
+        print(f"[INFO]   Dropped: {[t[0] for t in rtree_triggers]}")
+
+    print("[INFO] Building DGIF class metadata from ili2db tables...")
+    class_meta = build_class_metadata(dgif_conn)
+    print(f"[INFO] Found {len(class_meta)} DGIF classes")
+
+    # Get column sets for the base tables
+    entity_cols = get_column_names(dgif_conn, "foundation_entity")
+    feature_entity_cols = get_column_names(dgif_conn, "foundation_featureentity")
+    print(f"[INFO] Entity columns: {sorted(entity_cols)}")
+    print(f"[INFO] FeatureEntity columns: {sorted(feature_entity_cols)}")
 
     # Coordinate transformer
     transform_ct = create_transformer()
@@ -439,18 +596,32 @@ def transform(
         print("[FATAL] Cannot open TLM GeoPackage", file=sys.stderr)
         sys.exit(1)
 
-    # Open DGIF GeoPackage via sqlite3 for direct insert
-    dgif_conn = sqlite3.connect(dgif_gpkg_path)
-    dgif_conn.execute("PRAGMA journal_mode=WAL")
-    dgif_conn.execute("PRAGMA synchronous=NORMAL")
-    dgif_conn.execute("PRAGMA cache_size=-64000")  # 64 MB
+    # Collect which DGIF topics are needed for baskets
+    topics_needed = set()
+    for (_, _), rules in mapping.items():
+        for mr in rules:
+            if mr.dgif_class in class_meta:
+                meta = class_meta[mr.dgif_class]
+                topics_needed.add(f"DGIF_V3.{meta['topic']}")
+    # Always include Foundation (for Entity and FeatureEntity)
+    topics_needed.add("DGIF_V3.Foundation")
 
-    # Cache DGIF table column names
-    dgif_col_cache: dict[str, set[str]] = {}
+    print(f"[INFO] Creating baskets for {len(topics_needed)} topics...")
+    basket_map = ensure_baskets(dgif_conn, topics_needed)
+    print(f"[INFO] Baskets: {basket_map}")
+
+    # T_Id counter — start at 1 (tables are empty after schemaimport)
+    next_tid = 1
 
     # Statistics
     stats = defaultdict(int)
     now_iso = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    # Track spatial extent for gpkg_contents update (no SpatiaLite needed)
+    extent_min_x = float("inf")
+    extent_min_y = float("inf")
+    extent_max_x = float("-inf")
+    extent_max_y = float("-inf")
 
     # Collect unique TLM classes referenced in mapping
     tlm_classes_needed = set()
@@ -475,7 +646,7 @@ def transform(
             continue
 
         feature_count = tlm_layer.GetFeatureCount()
-        print(f"\n  [{tlm_class_name}] ({tlm_table}) — {feature_count} features")
+        print(f"\n  [{tlm_class_name}] ({tlm_table}) -- {feature_count} features")
 
         # Collect all Objektart values mapped for this class
         objektart_map: dict[str, list[MappingRow]] = {}
@@ -537,128 +708,172 @@ def transform(
             for mr in rules:
                 dgif_class = mr.dgif_class
 
-                # Resolve DGIF topic
-                topic = DGIF_CLASS_TO_TOPIC.get(dgif_class)
-                if topic is None:
-                    # Try to find in dgif_tables
-                    if dgif_class in dgif_tables:
-                        # Table exists directly
-                        pass
-                    else:
-                        stats["dgif_class_unknown_topic"] += 1
-                        continue
-
-                # Resolve DGIF table name
-                if dgif_class in dgif_tables:
-                    dgif_table_name = dgif_tables[dgif_class]
-                elif topic:
-                    candidate = f"{topic}.{dgif_class}"
-                    if candidate in [dgif_tables.get(k, "") for k in dgif_tables]:
-                        dgif_table_name = candidate
-                    else:
-                        # Try case-insensitive match
-                        found = False
-                        for k, v in dgif_tables.items():
-                            if k.lower() == dgif_class.lower():
-                                dgif_table_name = v
-                                found = True
-                                break
-                        if not found:
-                            stats["dgif_table_not_found"] += 1
-                            continue
-                else:
-                    stats["dgif_table_not_found"] += 1
+                # Resolve DGIF class metadata
+                if dgif_class not in class_meta:
+                    stats["dgif_class_not_found"] += 1
                     continue
 
-                # Get/cache column names
-                if dgif_table_name not in dgif_col_cache:
-                    dgif_col_cache[dgif_table_name] = get_column_names(dgif_conn, dgif_table_name)
+                meta = class_meta[dgif_class]
+                dgif_table_name = meta["sqlname"]
+                dgif_cols = meta["columns"]
+                dgif_iliname = meta["iliname"]   # e.g. 'DGIF_V3.Cultural.Building'
+                dgif_topic = meta["topic"]       # e.g. 'Cultural'
 
-                dgif_cols = dgif_col_cache[dgif_table_name]
+                # Resolve basket
+                topic_key = f"DGIF_V3.{dgif_topic}"
+                basket_id = basket_map.get(topic_key)
+                foundation_basket_id = basket_map.get("DGIF_V3.Foundation")
+                if basket_id is None or foundation_basket_id is None:
+                    stats["dgif_basket_not_found"] += 1
+                    continue
 
-                # Determine target geometry type
-                # DGIF FeatureEntity.geometry is MANDATORY Coord2 (Point)
-                # But many TLM sources are Line or Polygon.
-                # We reproject and convert: Polygon/Line → centroid for Point targets,
-                # or keep geometry type if the DGIF table supports it.
-                # Check if the DGIF table has a geometry column via gpkg_geometry_columns
-                target_geom = None
+                # Assign T_Id for this feature (same across all 3 tables)
+                tid = next_tid
+                next_tid += 1
+
+                # Generate identifiers
+                ili_tid = src_tid if src_tid else str(uuid.uuid4())
+                entity_uuid = ili_tid
+                begin_date = src_datum if src_datum else now_iso
+
+                # --- Geometry ---
+                # FeatureEntity.aGeometry is MANDATORY Coord2 (Point).
+                # For Line/Polygon sources, extract centroid.
+                geom_wkb = None
                 if src_geom is not None:
-                    target_geom = reproject_geometry(src_geom, transform_ct)
-
-                # Build feature data dict
-                feature_data = {}
-
-                # T_Id: auto-increment (leave to sqlite)
-
-                # T_Ili_Tid: use source UUID or generate new
-                if src_tid:
-                    feature_data["T_Ili_Tid"] = src_tid
-                else:
-                    feature_data["T_Ili_Tid"] = str(uuid.uuid4())
-
-                # uniqueUniversalEntityIdentifier (MANDATORY in Entity)
-                if "uniqueuniversalentityidentifier" in dgif_cols:
-                    if src_tid:
-                        feature_data["uniqueUniversalEntityIdentifier"] = src_tid
+                    geom_type = src_geom.GetGeometryType()
+                    flat_type = ogr.GT_Flatten(geom_type)
+                    if flat_type == ogr.wkbPoint:
+                        target_geom = reproject_geometry(src_geom, transform_ct)
                     else:
-                        feature_data["uniqueUniversalEntityIdentifier"] = str(uuid.uuid4())
+                        # Polygon, Line, Multi* -> centroid
+                        target_geom = extract_centroid_coord2(src_geom, transform_ct)
+                    if target_geom is not None:
+                        geom_wkb = to_gpkg_wkb(target_geom, srs_id=4326)
+                        # Track extent
+                        px = target_geom.GetX()
+                        py = target_geom.GetY()
+                        if px < extent_min_x:
+                            extent_min_x = px
+                        if px > extent_max_x:
+                            extent_max_x = px
+                        if py < extent_min_y:
+                            extent_min_y = py
+                        if py > extent_max_y:
+                            extent_max_y = py
 
-                # beginLifespanVersion (MANDATORY in Entity)
-                if "beginlifespanversion" in dgif_cols:
-                    if src_datum:
-                        feature_data["beginLifespanVersion"] = src_datum
+                # --- 1. Insert into foundation_entity ---
+                try:
+                    dgif_conn.execute(
+                        'INSERT INTO "foundation_entity" '
+                        '(T_Id, T_basket, T_Type, T_Ili_Tid, '
+                        ' beginlifespanversion, uniqueuniversalentityidentifier, '
+                        ' T_LastChange, T_CreateDate, T_User) '
+                        'VALUES (?,?,?,?,?,?,?,?,?)',
+                        (tid, foundation_basket_id, dgif_iliname, ili_tid,
+                         begin_date, entity_uuid,
+                         now_iso, now_iso, "etl_swisstlm3d")
+                    )
+                except sqlite3.Error as e:
+                    stats["entity_insert_error"] += 1
+                    class_skipped += 1
+                    continue
+
+                # --- 2. Insert into foundation_featureentity ---
+                try:
+                    if geom_wkb is not None:
+                        dgif_conn.execute(
+                            'INSERT INTO "foundation_featureentity" '
+                            '(T_Id, T_basket, ageometry, T_LastChange, T_CreateDate, T_User) '
+                            'VALUES (?,?,?,?,?,?)',
+                            (tid, foundation_basket_id, geom_wkb,
+                             now_iso, now_iso, "etl_swisstlm3d")
+                        )
                     else:
-                        feature_data["beginLifespanVersion"] = now_iso
+                        # ageometry is NOT NULL — use a default point (0,0)
+                        default_pt = ogr.Geometry(ogr.wkbPoint)
+                        default_pt.AddPoint(0.0, 0.0)
+                        default_wkb = to_gpkg_wkb(default_pt, srs_id=4326)
+                        dgif_conn.execute(
+                            'INSERT INTO "foundation_featureentity" '
+                            '(T_Id, T_basket, ageometry, T_LastChange, T_CreateDate, T_User) '
+                            'VALUES (?,?,?,?,?,?)',
+                            (tid, foundation_basket_id, default_wkb,
+                             now_iso, now_iso, "etl_swisstlm3d")
+                        )
+                except sqlite3.Error as e:
+                    if stats["feature_entity_insert_error"] == 0:
+                        print(f"  [DEBUG] FeatureEntity insert error: {e}", file=sys.stderr)
+                    stats["feature_entity_insert_error"] += 1
+                    class_skipped += 1
+                    continue
+
+                # --- 3. Insert into concrete class table ---
+                concrete_cols = ["T_Id", "T_basket", "T_LastChange", "T_CreateDate", "T_User"]
+                concrete_vals: list = [tid, basket_id, now_iso, now_iso, "etl_swisstlm3d"]
 
                 # Map DGIF-specific attributes from CSV
                 if mr.dgif_attr1 and mr.dgif_val1:
-                    attr_name = mr.dgif_attr1
-                    if attr_name.lower() in dgif_cols:
-                        feature_data[attr_name] = mr.dgif_val1
+                    attr_lower = mr.dgif_attr1.lower()
+                    if attr_lower in dgif_cols:
+                        concrete_cols.append(mr.dgif_attr1)
+                        concrete_vals.append(mr.dgif_val1)
 
                 if mr.dgif_attr2 and mr.dgif_val2:
-                    attr_name = mr.dgif_attr2
-                    if attr_name.lower() in dgif_cols:
-                        feature_data[attr_name] = mr.dgif_val2
+                    attr_lower = mr.dgif_attr2.lower()
+                    if attr_lower in dgif_cols:
+                        concrete_cols.append(mr.dgif_attr2)
+                        concrete_vals.append(mr.dgif_val2)
 
-                # Convert geometry to GPKG binary
-                geom_wkb = to_gpkg_wkb(target_geom) if target_geom else None
+                # Fill remaining NOT NULL columns with defaults
+                notnull_defs = meta.get("notnull_defaults", {})
+                already_set = {c.lower() for c in concrete_cols}
+                for nn_col, nn_default in notnull_defs.items():
+                    if nn_col not in already_set:
+                        concrete_cols.append(nn_col)
+                        concrete_vals.append(nn_default)
 
-                # Insert
-                ok = insert_feature(dgif_conn, dgif_table_name, dgif_cols, feature_data, geom_wkb)
-                if ok:
+                col_str = ", ".join(f'"{c}"' for c in concrete_cols)
+                placeholders = ", ".join(["?"] * len(concrete_vals))
+                sql = f'INSERT INTO "{dgif_table_name}" ({col_str}) VALUES ({placeholders})'
+
+                try:
+                    dgif_conn.execute(sql, concrete_vals)
                     class_inserted += 1
                     stats[f"inserted:{dgif_table_name}"] += 1
-                else:
+                except sqlite3.Error as e:
+                    if stats["concrete_insert_error"] < 5:
+                        print(f"  [DEBUG] Concrete insert error: {e}", file=sys.stderr)
+                        print(f"  [DEBUG]   table={dgif_table_name}", file=sys.stderr)
+                    stats["concrete_insert_error"] += 1
                     class_skipped += 1
 
         stats["total_inserted"] += class_inserted
         stats["total_skipped"] += class_skipped
         stats["total_no_match"] += class_no_match
 
-        print(f"    → Inserted: {class_inserted}  |  Skipped: {class_skipped}  |  No match: {class_no_match}")
+        print(f"    -> Inserted: {class_inserted}  |  Skipped: {class_skipped}  |  No match: {class_no_match}")
 
     # Commit
     print("\n[INFO] Committing to DGIF GeoPackage...")
     dgif_conn.commit()
 
-    # Update gpkg_contents extent for populated tables
+    # Update gpkg_contents extent for foundation_featureentity
     print("[INFO] Updating spatial extents...")
-    try:
-        for dgif_table_name in dgif_col_cache:
-            if "geometry" in dgif_col_cache[dgif_table_name]:
-                dgif_conn.execute(f"""
-                    UPDATE gpkg_contents SET
-                        min_x = (SELECT MIN(MbrMinX(geometry)) FROM "{dgif_table_name}" WHERE geometry IS NOT NULL),
-                        min_y = (SELECT MIN(MbrMinY(geometry)) FROM "{dgif_table_name}" WHERE geometry IS NOT NULL),
-                        max_x = (SELECT MAX(MbrMaxX(geometry)) FROM "{dgif_table_name}" WHERE geometry IS NOT NULL),
-                        max_y = (SELECT MAX(MbrMaxY(geometry)) FROM "{dgif_table_name}" WHERE geometry IS NOT NULL)
-                    WHERE table_name = ?
-                """, (dgif_table_name,))
-        dgif_conn.commit()
-    except sqlite3.Error:
-        pass  # MbrMinX may not be available without SpatiaLite
+    if extent_min_x < float("inf"):
+        try:
+            dgif_conn.execute(
+                "UPDATE gpkg_contents SET min_x=?, min_y=?, max_x=?, max_y=? "
+                "WHERE table_name='foundation_featureentity'",
+                (extent_min_x, extent_min_y, extent_max_x, extent_max_y)
+            )
+            dgif_conn.commit()
+            print(f"[INFO]   Extent: ({extent_min_x:.6f}, {extent_min_y:.6f}) - "
+                  f"({extent_max_x:.6f}, {extent_max_y:.6f})")
+        except sqlite3.Error as e:
+            print(f"[WARN] Could not update extents: {e}", file=sys.stderr)
+    else:
+        print("[INFO]   No geometry inserted, skipping extent update.")
 
     # Clean up
     dgif_conn.close()
@@ -672,8 +887,11 @@ def transform(
     print(f"  Total features skipped  : {stats['total_skipped']}")
     print(f"  No Objektart match      : {stats['total_no_match']}")
     print(f"  TLM classes not found   : {stats.get('tlm_class_not_found', 0)}")
-    print(f"  DGIF tables not found   : {stats.get('dgif_table_not_found', 0)}")
-    print(f"  DGIF unknown topic      : {stats.get('dgif_class_unknown_topic', 0)}")
+    print(f"  DGIF class not found    : {stats.get('dgif_class_not_found', 0)}")
+    print(f"  DGIF basket not found   : {stats.get('dgif_basket_not_found', 0)}")
+    print(f"  Entity insert errors    : {stats.get('entity_insert_error', 0)}")
+    print(f"  FeatureEntity errors    : {stats.get('feature_entity_insert_error', 0)}")
+    print(f"  Concrete insert errors  : {stats.get('concrete_insert_error', 0)}")
 
     print("\n  Features per DGIF table:")
     for k, v in sorted(stats.items()):

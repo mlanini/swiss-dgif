@@ -5,12 +5,13 @@
 This aims at setting up an end-to-end, fully automated pipeline that takes the DGIF 3.0 UML model — maintained by the [Defence Geospatial Information Working Group (DGIWG)](https://dgiwg.org/) — and produces a standards-compliant Swiss geospatial data stack:
 
 1. **INTERLIS 2.4 model** (`models/DGIF_V3.ili`) — 673 classes, 21 topics, 0 compiler errors
-2. **GeoPackage** (`output/DGIF_V3.gpkg`) — OGC/DGIWG-conformant schema in WGS84
+2. **GeoPackage schema** (`output/DGIF_V3.gpkg`) — OGC/DGIWG-conformant empty schema in WGS84
 3. **INTERLIS XML catalogues** (`models/DGFCD_*.xml`, `models/DGRWI_*.xml`) — DGFCD + DGRWI concept dictionaries
 4. **Mapping tables** — OSM ↔ DGIF V3 (1,657 rows) and swissTLM3D ↔ DGIF V3 (215 rows)
 5. **ETL pipeline** — populates the DGIF GeoPackage with real-world
    [swissTLM3D](https://www.swisstopo.admin.ch/en/landscape-model-swisstlm3d)
    data from swisstopo, reprojected from LV95 to WGS84
+6. **Populated GeoPackage** (`output/DGIF_swissTLM3D.gpkg`) — ~14.7 MB, 5,351 features across 37 DGIF tables
 
 All scripts are pure Python. The only external runtime dependency is Java (for
 the INTERLIS toolchain: ili2c, ili2gpkg, ilivalidator).
@@ -169,7 +170,7 @@ Generates a GeoPackage conforming to the DGIWG profile (STD-08-006) using `ili2g
 | `--createEnumTabs` | Lookup tables for enumerations |
 | `--createTidCol` | T_Ili_Tid column for Transfer-ID |
 
-**Result:** `output/DGIF_V3.gpkg` — ~5 MB, SRID 4326.
+**Result:** `output/DGIF_V3.gpkg` — ~12 MB (empty schema), SRID 4326.
 
 **Run:**
 ```bash
@@ -311,8 +312,8 @@ python scripts/build_swisstlm3d_dgif_v3.py
 ### Step 6 — ETL Pipeline: swissTLM3D XTF → DGIF GeoPackage
 
 **Scripts:**
-- `scripts/etl_swisstlm3d_to_dgif.py` — Python orchestrator
-- `scripts/etl_swisstlm3d_transform.py` — Python transform & load
+- `scripts/etl_swisstlm3d_to_dgif.py` — Python orchestrator (~595 lines)
+- `scripts/etl_swisstlm3d_transform.py` — Python transform & load (~930 lines)
 
 **Input:**
 - swissTLM3D XTF archive from [data.geo.admin.ch](https://data.geo.admin.ch/ch.swisstopo.swisstlm3d/)
@@ -331,8 +332,39 @@ The pipeline runs in 6 phases:
 | 2 — Extract | Python | Extracts the 8 `.xtf` files from the ZIP (~28 GB uncompressed) |
 | 2b — Validate | ilivalidator | Validates the data against the INTERLIS model (`--modeldir`, `--logtime`); generates text log and XTF error log. Non-blocking: pipeline continues on validation errors (official swisstopo data may contain minor model deviations). Skippable with `--skip-validation` |
 | 3 — Schema | ili2gpkg | Creates an empty DGIF GeoPackage via `--schemaimport` with `models/DGIF_V3.ili` (same options as Step 3: `--noSmartMapping`, `--nameByTopic`, SRID 4326) |
-| 4 — Import | ili2gpkg | Imports each XTF file into a temporary swissTLM3D GeoPackage (`--import`, SRID 2056, `--nameByTopic`) |
+| 4 — Import | ili2gpkg | Imports each XTF file into a temporary swissTLM3D GeoPackage (`--import`, `--disableValidation`, SRID 2056, `--nameByTopic`) |
 | 5 — Transform | Python/OGR | Reads the TLM GeoPackage, applies the mapping CSV, reprojects LV95→WGS84, and inserts features into the DGIF GeoPackage |
+
+**ili2db `--noSmartMapping` inheritance model:**
+
+With `--noSmartMapping`, ili2gpkg creates a **separate table for each level** in the
+class hierarchy. Every DGIF feature class inherits from `Foundation.FeatureEntity`
+which extends `Foundation.Entity`, resulting in a **3-table insert** per feature:
+
+| Table | Role | Key columns |
+|-------|------|-------------|
+| `foundation_entity` | Base class (identity, metadata) | `T_Id` (PK), `T_Type`, `T_Ili_Tid`, `beginlifespanversion`, `uniqueuniversalentityidentifier` |
+| `foundation_featureentity` | Geometry holder | `T_Id` (PK, FK→entity), `ageometry` (POINT, NOT NULL) |
+| Concrete class table | Domain-specific attributes | `T_Id` (PK, FK→featureentity), domain attributes |
+
+All three rows share the **same `T_Id`** value (manually managed, no AUTOINCREMENT).
+`T_Type` in `foundation_entity` must contain the fully qualified INTERLIS class name
+(e.g. `DGIF_V3.Cultural.Building`). Baskets and datasets are created for each DGIF
+topic via the `T_ILI2DB_DATASET` / `T_ILI2DB_BASKET` metadata tables.
+
+**Implementation notes:**
+
+- **R-tree triggers:** ili2gpkg creates R-tree spatial index triggers that call
+  SpatiaLite functions (`ST_IsEmpty`, `ST_MinX` etc.), which are not available in
+  Python's built-in `sqlite3` module. The transform script drops these triggers
+  before inserting and tracks the spatial extent in Python for `gpkg_contents`.
+- **NOT NULL defaults:** Some concrete class columns have NOT NULL constraints
+  (e.g. `cabletype`, `surfacematerialtype`, `transrteleavingrestrict`). The transform
+  auto-fills these with type-appropriate defaults when the mapping CSV does not
+  provide a value.
+- **Table discovery:** Uses the `T_ILI2DB_CLASSNAME` metadata table to resolve
+  INTERLIS qualified names to SQL table names (e.g. `DGIF_V3.Cultural.Building`
+  → `cultural_building`).
 
 **Attribute mapping:**
 
@@ -340,18 +372,37 @@ The pipeline runs in 6 phases:
 |------------|-------------|-------|
 | `OID` (UUID) | `uniqueUniversalEntityIdentifier` | Mandatory in Entity base class |
 | `Datum_Erstellung` | `beginLifespanVersion` | Mandatory in Entity base class |
-| `Name` | — | Stored via `T_Ili_Tid` for traceability |
+| `T_Ili_Tid` | `T_Ili_Tid` | Transfer-ID for traceability |
 | `Objektart` enum value | DGIF class + attribute/value | Per CSV mapping rules |
 
 **Coordinate reprojection:**
 
 All geometries are reprojected from LV95 (EPSG:2056) to WGS84 (EPSG:4326) and
-flattened from 3D to 2D (DGIF uses `Coord2`).
+flattened from 3D to 2D (DGIF uses `Coord2`). For Line and Polygon source
+geometries mapped to Point DGIF classes, a centroid is extracted.
+
+**Test results (single tile — SWISSTLM3D_CHLV95LN02.xtf, 21.9 MB):**
+
+| Metric | Value |
+|--------|-------|
+| Total features inserted | 5,351 |
+| Total features skipped | 0 |
+| No Objektart match | 748 (TLM_STRASSENINFO) |
+| TLM classes not found | 2 (TLM_EINZELBAUM_GEBUESCH, TLM_STRASSENROUTE) |
+| Entity insert errors | 0 |
+| FeatureEntity insert errors | 0 |
+| Concrete insert errors | 0 |
+| DGIF tables populated | 37 |
+| Output size | ~14.7 MB |
+| Transform time | ~3 s |
+| Extent (WGS84) | (8.62, 46.16) – (8.87, 46.40) |
 
 **Discarded features:**
 
 Seven `Objektart` values marked as "not in DGIF" in the mapping table are silently
-discarded (see Step 5 — Unmapped elements).
+discarded (see Step 5 — Unmapped elements). The 748 "no match" on TLM_STRASSENINFO
+correspond to `Objektart` values not present in the mapping CSV (topological nodes,
+MISTRA nodes, etc.).
 
 **Run:**
 ```bash
@@ -360,8 +411,14 @@ python scripts/etl_swisstlm3d_to_dgif.py
 # To skip re-downloading:
 python scripts/etl_swisstlm3d_to_dgif.py --skip-download
 
-# To skip download, extraction, and validation:
-python scripts/etl_swisstlm3d_to_dgif.py --skip-download --skip-extract --skip-validation
+# To skip download, extraction, validation, and import (re-run only Phase 3 + 5):
+python scripts/etl_swisstlm3d_to_dgif.py --skip-download --skip-extract --skip-validation --skip-import
+
+# Full example with QGIS Python and custom temp dir:
+python scripts/etl_swisstlm3d_to_dgif.py \
+    --tmp-dir C:/tmp/dgif \
+    --skip-download --skip-extract --skip-validation --skip-import \
+    --python "C:\Program Files\QGIS 3.40.7\apps\Python312\python.exe"
 ```
 
 ---
@@ -376,6 +433,7 @@ python scripts/etl_swisstlm3d_to_dgif.py --skip-download --skip-extract --skip-v
 | ili2gpkg | 5.3.1 | `ressources/ili2gpkg-5.3.1/ili2gpkg-5.3.1.jar` |
 | ilivalidator | 1.15.0 | `ressources/ilivalidator-1.15.0/ilivalidator-1.15.0.jar` |
 | GDAL/OGR | 3.10+ | Bundled with QGIS or installed separately |
+| QGIS (optional) | 3.40+ | Provides Python 3.12 + GDAL; use `--python` flag in Step 6 |
 
 > **Note:** Steps 1–5 use only the Python standard library. Step 6 additionally
 > requires GDAL/OGR Python bindings (e.g. from a QGIS installation or `pip install GDAL`).
@@ -401,7 +459,7 @@ python scripts/generate_ili_model.py
 # Step 2b — Validation
 java -jar ressources/ili2c-5.6.8/ili2c.jar --check models/DGIF_V3.ili
 
-# Step 3 — GeoPackage
+# Step 3 — GeoPackage (empty schema)
 python scripts/generate_gpkg.py
 
 # Step 4 — OSM↔DGIF V3 Table
@@ -410,8 +468,12 @@ python scripts/build_osm_dgif_v3.py
 # Step 5 — swissTLM3D↔DGIF V3 Table
 python scripts/build_swisstlm3d_dgif_v3.py
 
-# Step 6 — ETL: swissTLM3D XTF → DGIF GeoPackage
+# Step 6 — ETL: swissTLM3D XTF → DGIF GeoPackage (full run)
 python scripts/etl_swisstlm3d_to_dgif.py
+
+# Step 6 — Re-run only schema + transform (skip download/extract/validation/import)
+python scripts/etl_swisstlm3d_to_dgif.py \
+    --skip-download --skip-extract --skip-validation --skip-import
 ```
 
 ---
