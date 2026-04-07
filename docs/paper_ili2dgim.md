@@ -838,26 +838,21 @@ This paper has presented *ili2dgim*, an end-to-end, fully automated pipeline tha
 
 The work demonstrates that the Swiss INTERLIS ecosystem — with its formal model verification, multi-target generation, and standardised validation — provides an effective implementation platform for NATO/DGIWG geospatial standards.
 
-### 11.2 Towards a Multi-National DGIF Implementation Testbed
+### 11.2 Towards Broader Data Model Integration
 
-The natural next step is to extend the implementation to additional national datasets. A multi-national testbed could include:
+The natural next step is to deepen the integration with additional open and community-driven geospatial data models. While national topographic datasets are valuable, the greatest potential for scalable DGIF population lies in globally available, continuously updated data ecosystems:
 
-- **Germany:** ATKIS (Amtliches Topographisch-Kartographisches Informationssystem) → DGIF
-- **France:** BD TOPO (IGN) → DGIF
-- **United Kingdom:** OS MasterMap → DGIF
-- **United States:** National Map (USGS) → DGIF
+- **OpenStreetMap (OSM):** The current 1,657-rule mapping covers 23.5% of DGIF classes. Expanding coverage to specialist OSM tagging schemas — such as `seamark:*` for maritime features, `aeroway:*` for aeronautical infrastructure, and `military:*` for defence-relevant objects — could significantly increase the proportion of DGIF classes addressable from OSM alone. Furthermore, integrating OSM's rich attribute vocabulary (e.g., `maxspeed`, `lanes`, `surface`) into the mapping would improve attribute completeness beyond the current two-attribute-per-rule limit.
 
-Such a testbed would validate cross-national interoperability at scale and identify DGIF schema gaps or ambiguities that only emerge with diverse national datasets.
+- **Overture Maps Foundation:** As Overture's schema evolves (new themes, subtypes, and attribute structures are added with each quarterly release), the mapping must track these changes systematically. The 4-level cascading fallback mechanism (Section 7.4) provides resilience, but a schema-diff tool that automatically detects new Overture categories and proposes candidate DGIF mappings would accelerate maintenance.
 
-### 11.3 Integration with INSPIRE and OGC API – Features
+- **Additional open data models:** Google Open Buildings, Microsoft Building Footprints, ESA WorldCover (land use/land cover), and OpenAddresses represent complementary data sources that could fill specific DGIF domains (buildings, land cover, addresses) with high-quality, globally consistent data. Each would require a source-specific mapping CSV and ETL adapter following the established pipeline architecture.
 
-Two standards-based extensions are planned:
+- **INSPIRE data models:** The INSPIRE Directive defines harmonised data models for 34 spatial data themes across Europe. A systematic DGIF-to-INSPIRE mapping layer could leverage the existing DGFCD catalogues and enable bidirectional data exchange between NATO/DGIWG and European SDI contexts.
 
-1. **INSPIRE harmonisation:** The DGIF and INSPIRE thematic domains overlap significantly (transport networks, hydrography, land use, buildings). A DGIF-to-INSPIRE mapping layer would enable DGIF data to be served through INSPIRE download services without duplication.
+The overarching goal is to evolve *ili2dgim* from a pipeline targeting individual data sources into a **multi-source harmonisation framework** where any geospatial dataset with a documented schema can be mapped to DGIF through a standardised CSV-based methodology and pluggable ETL adapters.
 
-2. **OGC API – Features:** The generated GeoPackage can be served via OGC API – Features implementations (e.g., pygeoapi, GeoServer) without modification, providing RESTful HTTP access to DGIF features. This aligns with DGIWG's own work on web service profiles.
-
-### 11.4 Continuous Synchronisation with Evolving Source Data and DGIM Versions
+### 11.3 Continuous Synchronisation with Evolving Source Data and DGIM Versions
 
 The pipeline's automation enables continuous synchronisation:
 
